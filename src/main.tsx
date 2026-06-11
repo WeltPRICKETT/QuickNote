@@ -7,6 +7,8 @@ import '@fontsource-variable/lora/index.css'
 import 'lxgw-wenkai-screen-webfont/lxgwwenkaiscreen.css'
 import './styles.css'
 
+document.documentElement.dataset.runtime = '__TAURI_INTERNALS__' in window ? 'tauri' : 'browser'
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
