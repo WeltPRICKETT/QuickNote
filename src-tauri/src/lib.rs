@@ -9,7 +9,7 @@ use std::{
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, State,
+    AppHandle, Manager, State, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -82,11 +82,20 @@ pub fn run() {
             }
             Ok(())
         })
+        // Closing the window (X button, Alt+F4) hides to tray; quitting is done
+        // from the tray menu, so the global wake shortcut keeps working.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             list_notes,
             read_note,
             create_note,
             save_note,
+            delete_note,
             search_notes,
             get_settings,
             update_settings,
@@ -137,8 +146,13 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
-    TrayIconBuilder::new()
-        .menu(&menu)
+    let mut tray = TrayIconBuilder::new();
+    // Without an image the tray entry is invisible on Windows.
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.menu(&menu)
+        .tooltip("QuickNote")
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
@@ -213,6 +227,19 @@ fn save_note(id: String, body: String, state: State<SharedState>) -> Result<Note
     note.meta.excerpt.truncate(140);
     write_note(&guard.notes_dir, &note)?;
     Ok(note.meta)
+}
+
+#[tauri::command]
+fn delete_note(id: String, state: State<SharedState>) -> Result<(), String> {
+    if id.contains('/') || id.contains('\\') || id.contains("..") {
+        return Err(format!("invalid note id: {id}"));
+    }
+    let guard = state.lock().map_err(|error| error.to_string())?;
+    let path = guard.notes_dir.join(&id);
+    if !path.exists() {
+        return Err(format!("note not found: {id}"));
+    }
+    fs::remove_file(path).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

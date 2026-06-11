@@ -10,6 +10,7 @@ import {
   Settings,
   SunMoon,
   Terminal,
+  Trash2,
   Type,
 } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -32,6 +33,7 @@ interface PaletteCommand {
 export function CommandPalette() {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const listRef = useRef<HTMLDivElement | null>(null)
   const createNote = useAppStore((state) => state.createNote)
   const setCommandOpen = useAppStore((state) => state.setCommandOpen)
@@ -64,6 +66,22 @@ export function CommandPalette() {
         icon: Search,
         keys: ['Ctrl', 'P'],
         run: () => setSwitcherOpen(true),
+      },
+      {
+        id: 'delete',
+        label: confirmDelete ? '确认删除当前便签？（再次执行确认）' : '删除当前便签…',
+        section: '便签',
+        icon: Trash2,
+        run: async () => {
+          if (!confirmDelete) {
+            setConfirmDelete(true)
+            return
+          }
+          const id = useAppStore.getState().currentNote?.meta.id
+          setConfirmDelete(false)
+          if (id) await useAppStore.getState().deleteNote(id)
+          setCommandOpen(false)
+        },
       },
       {
         id: 'copy',
@@ -148,7 +166,7 @@ export function CommandPalette() {
         run: () => void tauriCommand<void>('toggle_window'),
       },
     ],
-    [createNote, fontFamily, setCommandOpen, setSettingsOpen, setSwitcherOpen, theme, toggleFocusMode, togglePinned, toggleSidebar, updateSettings],
+    [confirmDelete, createNote, fontFamily, setCommandOpen, setSettingsOpen, setSwitcherOpen, theme, toggleFocusMode, togglePinned, toggleSidebar, updateSettings],
   )
 
   const visible = useMemo(() => {
@@ -214,6 +232,7 @@ export function CommandPalette() {
             onChange={(event) => {
               setQuery(event.target.value)
               setSelected(0)
+              setConfirmDelete(false)
             }}
             onKeyDown={onKeyDown}
             placeholder="输入命令…"

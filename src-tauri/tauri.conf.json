@@ -34,6 +34,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "dmg", "app"],
+    "icon": ["icons/icon.ico"],
     "windows": {
       "nsis": {
         "installMode": "both"

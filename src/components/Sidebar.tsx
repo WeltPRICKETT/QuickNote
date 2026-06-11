@@ -228,6 +228,8 @@ function NoteRow({
   const groups = useGroupStore((state) => state.groups)
   const assignment = useGroupStore((state) => state.assignment)
   const assignNote = useGroupStore((state) => state.assignNote)
+  const deleteNote = useAppStore((state) => state.deleteNote)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const currentGroup = assignment[note.id]
 
   return (
@@ -239,39 +241,58 @@ function NoteRow({
         </span>
         <span className="sidebar-note-time">{compactTime(note.updated)}</span>
       </button>
-      {groups.length > 0 ? (
-        <button
-          className="sidebar-note-menu"
-          title="移动到分组"
-          onMouseDown={(event) => event.stopPropagation()}
-          onClick={() => setMenuFor(menuOpen ? null : note.id)}
-        >
-          <MoreHorizontal size={13} />
-        </button>
-      ) : null}
+      <button
+        className="sidebar-note-menu"
+        title="便签操作"
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={() => {
+          setConfirmDelete(false)
+          setMenuFor(menuOpen ? null : note.id)
+        }}
+      >
+        <MoreHorizontal size={13} />
+      </button>
       {menuOpen ? (
         <div className="note-menu" onMouseDown={(event) => event.stopPropagation()}>
-          <div className="note-menu-label">移动到</div>
-          {groups.map((group) => (
-            <button
-              key={group.id}
-              className={currentGroup === group.id ? 'is-current' : ''}
-              onClick={() => {
-                assignNote(note.id, group.id)
-                setMenuFor(null)
-              }}
-            >
-              {group.name}
-            </button>
-          ))}
+          {groups.length > 0 ? (
+            <>
+              <div className="note-menu-label">移动到</div>
+              {groups.map((group) => (
+                <button
+                  key={group.id}
+                  className={currentGroup === group.id ? 'is-current' : ''}
+                  onClick={() => {
+                    assignNote(note.id, group.id)
+                    setMenuFor(null)
+                  }}
+                >
+                  {group.name}
+                </button>
+              ))}
+              <button
+                className={!currentGroup ? 'is-current' : ''}
+                onClick={() => {
+                  assignNote(note.id, null)
+                  setMenuFor(null)
+                }}
+              >
+                未分组
+              </button>
+              <div className="note-menu-divider" />
+            </>
+          ) : null}
           <button
-            className={!currentGroup ? 'is-current' : ''}
+            className="note-menu-danger"
             onClick={() => {
-              assignNote(note.id, null)
+              if (!confirmDelete) {
+                setConfirmDelete(true)
+                return
+              }
               setMenuFor(null)
+              void deleteNote(note.id)
             }}
           >
-            未分组
+            {confirmDelete ? '确认删除？' : '删除便签'}
           </button>
         </div>
       ) : null}

@@ -109,6 +109,11 @@ async function mockCommand<T>(name: string, args?: Record<string, unknown>): Pro
       writeMockNotes(copy)
       return updated.meta as T
     }
+    case 'delete_note': {
+      const id = String(args?.id)
+      writeMockNotes(notes.filter((note) => note.meta.id !== id))
+      return undefined as T
+    }
     case 'search_notes':
       return rankNotes(notes.map((note) => ({ ...note.meta, body: note.body })), String(args?.query ?? '')) as T
     case 'get_settings':

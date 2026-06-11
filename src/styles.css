@@ -1570,6 +1570,20 @@ input[type='range']::-webkit-slider-thumb:hover {
   font-weight: 600;
 }
 
+.note-menu-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+.note-menu button.note-menu-danger {
+  color: var(--accent);
+}
+
+.note-menu button.note-menu-danger:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 .sidebar-empty {
   padding: 20px 0;
   text-align: center;

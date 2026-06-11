@@ -1,6 +1,7 @@
 type EventMap = {
   'note:created': { id: string }
   'note:saved': { id: string }
+  'note:deleted': { id: string }
   'app:shown': undefined
   'app:hidden': undefined
   'settings:changed': undefined

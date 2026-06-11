@@ -59,7 +59,7 @@ export function WindowChrome() {
         <button className="window-control" title="最小化" onClick={() => void currentWindow()?.minimize()}>
           <Minus size={15} />
         </button>
-        <button className="window-control window-close" title="关闭" onClick={() => void currentWindow()?.close()}>
+        <button className="window-control window-close" title="关闭到托盘" onClick={() => void currentWindow()?.close()}>
           <X size={15} />
         </button>
       </div>

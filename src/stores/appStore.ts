@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { eventBus } from '../core/events'
 import { command } from '../lib/tauri'
+import { useGroupStore } from './groupStore'
 import type { NoteDocument, NoteMeta, SearchResult } from '../types'
 
 interface AppState {
@@ -16,6 +17,7 @@ interface AppState {
   boot: () => Promise<void>
   createNote: () => Promise<void>
   openNote: (id: string) => Promise<void>
+  deleteNote: (id: string) => Promise<void>
   saveCurrent: (body: string) => Promise<void>
   search: (query: string) => Promise<SearchResult[]>
   setCommandOpen: (open: boolean) => void
@@ -54,6 +56,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   async openNote(id) {
     const note = await command<NoteDocument>('read_note', { id })
     set({ currentNote: note, switcherOpen: false, commandOpen: false })
+  },
+
+  async deleteNote(id) {
+    await command<void>('delete_note', { id })
+    useGroupStore.getState().assignNote(id, null)
+    const notes = await command<NoteMeta[]>('list_notes')
+    set({ notes })
+    if (get().currentNote?.meta.id === id) {
+      if (notes[0]) {
+        await get().openNote(notes[0].id)
+      } else {
+        await get().createNote()
+      }
+    }
+    eventBus.emit('note:deleted', { id })
   },
 
   async saveCurrent(body) {
