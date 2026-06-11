@@ -1,0 +1,39 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Test
+        run: npm run typecheck && npm run test
+      - name: Build Tauri bundles
+        run: npm run tauri:build
+      - name: SHA256
+        shell: bash
+        run: |
+          find src-tauri/target/release/bundle -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.dmg" -o -name "*.app.tar.gz" \) -print0 | xargs -0 shasum -a 256 > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quicknote-${{ matrix.platform }}
+          path: |
+            src-tauri/target/release/bundle/**
+            SHA256SUMS.txt
