@@ -1,4 +1,5 @@
 import type { NoteMeta } from '../types'
+import { shortcutKeyLabel } from '../lib/platform'
 
 export function createMarkdownFilename(iso: string, slug: string) {
   const date = new Date(iso)
@@ -26,7 +27,7 @@ export function defaultNoteBody() {
     '# Today Quick Note',
     '',
     '- [ ] Capture the thought while it is still warm',
-    '- Use `Cmd/Ctrl+K` for commands',
+    `- Use \`${shortcutKeyLabel('Mod')}+K\` for commands`,
     '',
     '> QuickNote keeps the file plain Markdown.',
   ].join('\n')

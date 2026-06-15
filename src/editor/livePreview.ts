@@ -10,6 +10,7 @@ import {
 } from '@codemirror/view'
 import { tags as t } from '@lezer/highlight'
 import type { SyntaxNodeRef } from '@lezer/common'
+import { shortcutKeyLabel } from '../lib/platform'
 
 /**
  * Obsidian-style live preview for Markdown.
@@ -329,7 +330,7 @@ function buildDecorations(view: EditorView): DecorationSet {
     decorations.push(
       Decoration.mark({
         class: node.name === 'Image' ? 'cm-md-link cm-md-image' : 'cm-md-link',
-        attributes: { 'data-url': href, title: href ? `${href} (Ctrl+Click)` : '' },
+        attributes: { 'data-url': href, title: href ? `${href} (${shortcutKeyLabel('Mod')}+Click)` : '' },
       }).range(node.from, node.to),
     )
     if (touches(node.from, node.to)) return

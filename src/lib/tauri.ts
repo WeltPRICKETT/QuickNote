@@ -68,6 +68,8 @@ async function mockCommand<T>(name: string, args?: Record<string, unknown>): Pro
       const id = String(args?.id)
       return (notes.find((note) => note.meta.id === id) ?? notes[0]) as T
     }
+    case 'consume_opened_notes':
+      return [] as T
     case 'create_note': {
       const now = new Date().toISOString()
       const filename = createMarkdownFilename(now, 'quick-note')
@@ -125,8 +127,9 @@ async function mockCommand<T>(name: string, args?: Record<string, unknown>): Pro
     }
     case 'toggle_window':
     case 'set_window_pinned':
-    case 'choose_notes_dir':
       return undefined as T
+    case 'choose_notes_dir':
+      return null as T
     default:
       throw new Error(`Mock command not implemented: ${name}`)
   }

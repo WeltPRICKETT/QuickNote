@@ -1,12 +1,14 @@
-import { CaseSensitive, FolderOpen, Keyboard, MousePointerClick, Scroll, Zap } from 'lucide-react'
+import { CaseSensitive, FolderOpen, Keyboard, MousePointerClick, Scroll, X, Zap } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/appStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { FONT_PRESETS, THEME_PRESETS } from '../themes'
+import { shortcutKeyLabel } from '../lib/platform'
 
 export function SettingsPanel() {
   const setSettingsOpen = useAppStore((state) => state.setSettingsOpen)
+  const reloadNotes = useAppStore((state) => state.reloadNotes)
   const settings = useSettingsStore()
   const update = useSettingsStore((state) => state.update)
 
@@ -38,8 +40,8 @@ export function SettingsPanel() {
       >
         <header>
           <h2>设置</h2>
-          <button className="settings-close" onClick={() => setSettingsOpen(false)}>
-            Esc
+          <button className="settings-close" title="关闭设置" onClick={() => setSettingsOpen(false)}>
+            <X size={15} />
           </button>
         </header>
 
@@ -148,10 +150,19 @@ export function SettingsPanel() {
 
         <div className="settings-section">存储</div>
 
-        <div className="directory-row">
+        <button
+          className="directory-row"
+          title="选择 Markdown 存储目录"
+          onClick={async () => {
+            const directory = await useSettingsStore.getState().chooseNotesDirectory()
+            if (directory) {
+              await reloadNotes()
+            }
+          }}
+        >
           <FolderOpen size={15} />
           <span>{settings.noteDirectory}</span>
-        </div>
+        </button>
       </motion.aside>
     </motion.div>
   )
@@ -243,7 +254,7 @@ function prettyKey(part: string) {
     Quote: "'",
     BracketLeft: '[',
     BracketRight: ']',
-    Super: 'Win',
+    Super: shortcutKeyLabel('Super'),
   }
-  return names[part] ?? part
+  return names[part] ?? shortcutKeyLabel(part)
 }

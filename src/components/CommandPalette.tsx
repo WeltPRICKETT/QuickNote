@@ -16,6 +16,7 @@ import {
 import { motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { command as tauriCommand } from '../lib/tauri'
+import { shortcutKeyLabel } from '../lib/platform'
 import { useAppStore } from '../stores/appStore'
 import { useGroupStore } from '../stores/groupStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -53,7 +54,7 @@ export function CommandPalette() {
         label: '新建便签',
         section: '便签',
         icon: FilePlus,
-        keys: ['Ctrl', 'N'],
+        keys: ['Mod', 'N'],
         run: async () => {
           await createNote()
           setCommandOpen(false)
@@ -64,7 +65,7 @@ export function CommandPalette() {
         label: '切换便签…',
         section: '便签',
         icon: Search,
-        keys: ['Ctrl', 'P'],
+        keys: ['Mod', 'P'],
         run: () => setSwitcherOpen(true),
       },
       {
@@ -99,7 +100,7 @@ export function CommandPalette() {
         label: '专注写作模式',
         section: '视图',
         icon: Focus,
-        keys: ['Ctrl', 'Shift', 'F'],
+        keys: ['Mod', 'Shift', 'F'],
         run: () => {
           toggleFocusMode()
           setCommandOpen(false)
@@ -110,7 +111,7 @@ export function CommandPalette() {
         label: '钉住窗口',
         section: '视图',
         icon: Pin,
-        keys: ['Ctrl', 'Shift', 'P'],
+        keys: ['Mod', 'Shift', 'P'],
         run: async () => {
           await togglePinned()
           setCommandOpen(false)
@@ -121,7 +122,7 @@ export function CommandPalette() {
         label: '切换侧边栏',
         section: '视图',
         icon: PanelLeft,
-        keys: ['Ctrl', '\\'],
+        keys: ['Mod', '\\'],
         run: () => {
           toggleSidebar()
           setCommandOpen(false)
@@ -154,7 +155,7 @@ export function CommandPalette() {
         label: '设置',
         section: '应用',
         icon: Settings,
-        keys: ['Ctrl', ','],
+        keys: ['Mod', ','],
         run: () => setSettingsOpen(true),
       },
       {
@@ -263,7 +264,7 @@ export function CommandPalette() {
                   {item.keys ? (
                     <span className="item-keys">
                       {item.keys.map((key) => (
-                        <kbd key={key}>{key}</kbd>
+                        <kbd key={key}>{shortcutKeyLabel(key)}</kbd>
                       ))}
                     </span>
                   ) : null}

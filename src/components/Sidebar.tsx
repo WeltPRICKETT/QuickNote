@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../stores/appStore'
 import { type NoteGroup, useGroupStore } from '../stores/groupStore'
+import { shortcutKeyLabel } from '../lib/platform'
 import type { NoteMeta } from '../types'
 
 export function Sidebar() {
@@ -81,7 +82,7 @@ export function Sidebar() {
           <button title="新建分组" onClick={() => addGroup(`分组 ${groups.length + 1}`)}>
             <FolderPlus size={14} />
           </button>
-          <button title="新建便签 (Ctrl+N)" onClick={() => void createNote()}>
+          <button title={`新建便签 (${shortcutKeyLabel('Mod')}+N)`} onClick={() => void createNote()}>
             <FilePlus size={14} />
           </button>
         </div>

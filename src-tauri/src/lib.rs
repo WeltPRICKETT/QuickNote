@@ -7,10 +7,12 @@ use std::{
     sync::Mutex,
 };
 use tauri::{
+    Emitter,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, State, WindowEvent,
+    AppHandle, Manager, RunEvent, State, Url, WindowEvent,
 };
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,12 +53,14 @@ struct AppSettings {
 struct QuickNoteState {
     notes_dir: PathBuf,
     settings_path: PathBuf,
+    pending_opened_note_ids: Vec<String>,
 }
 
 type SharedState = Mutex<QuickNoteState>;
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -74,6 +78,7 @@ pub fn run() {
                 .map(|settings| settings.global_shortcut)
                 .unwrap_or_else(|| "Alt+Space".into());
             app.manage(Mutex::new(state));
+            import_cli_opened_files(app.handle());
             setup_tray(app.handle())?;
             let shortcut = parse_shortcut(&configured)
                 .unwrap_or_else(|| Shortcut::new(Some(Modifiers::ALT), Code::Space));
@@ -85,14 +90,23 @@ pub fn run() {
         // Closing the window (X button, Alt+F4) hides to tray; quitting is done
         // from the tray menu, so the global wake shortcut keeps working.
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                WindowEvent::Focused(false) => {
+                    if should_hide_on_blur(window.app_handle()) {
+                        let _ = window.hide();
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
             list_notes,
             read_note,
+            consume_opened_notes,
             create_note,
             save_note,
             delete_note,
@@ -103,8 +117,16 @@ pub fn run() {
             set_window_pinned,
             choose_notes_dir
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running QuickNote");
+        .build(tauri::generate_context!())
+        .expect("error while building QuickNote")
+        .run(|app, event| {
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+            if let RunEvent::Opened { urls } = event {
+                if let Err(error) = handle_opened_urls(app, urls) {
+                    eprintln!("failed to open external markdown file: {error}");
+                }
+            }
+        });
 }
 
 fn init_state(app: &AppHandle) -> tauri::Result<QuickNoteState> {
@@ -114,13 +136,16 @@ fn init_state(app: &AppHandle) -> tauri::Result<QuickNoteState> {
         app.path().app_data_dir()?
     };
     let settings_path = data_dir.join("settings.json");
-    let notes_dir = if is_portable(app) {
+    let default_notes_dir = if is_portable(app) {
         data_dir.join("notes")
     } else {
         dirs::home_dir()
             .unwrap_or_else(|| data_dir.clone())
             .join("QuickNotes")
     };
+    let notes_dir = read_settings_file(&settings_path)
+        .and_then(|settings| normalized_notes_dir(&settings.note_directory))
+        .unwrap_or(default_notes_dir);
 
     fs::create_dir_all(&notes_dir)?;
     fs::create_dir_all(&data_dir)?;
@@ -128,6 +153,7 @@ fn init_state(app: &AppHandle) -> tauri::Result<QuickNoteState> {
     Ok(QuickNoteState {
         notes_dir,
         settings_path,
+        pending_opened_note_ids: Vec::new(),
     })
 }
 
@@ -191,6 +217,12 @@ fn read_note(id: String, state: State<SharedState>) -> Result<NoteDocument, Stri
         .into_iter()
         .find(|note| note.meta.id == id)
         .ok_or_else(|| format!("note not found: {id}"))
+}
+
+#[tauri::command]
+fn consume_opened_notes(state: State<SharedState>) -> Result<Vec<String>, String> {
+    let mut guard = state.lock().map_err(|error| error.to_string())?;
+    Ok(std::mem::take(&mut guard.pending_opened_note_ids))
 }
 
 #[tauri::command]
@@ -292,17 +324,25 @@ fn update_settings(
     settings: AppSettings,
     state: State<SharedState>,
 ) -> Result<AppSettings, String> {
-    let guard = state.lock().map_err(|error| error.to_string())?;
-    let previous =
-        read_settings_file(&guard.settings_path).unwrap_or_else(|| default_settings(&guard.notes_dir));
+    let mut guard = state.lock().map_err(|error| error.to_string())?;
+    let previous = read_settings_file(&guard.settings_path).unwrap_or_else(|| default_settings(&guard.notes_dir));
 
     if previous.global_shortcut != settings.global_shortcut {
         apply_global_shortcut(&app, &previous.global_shortcut, &settings.global_shortcut)?;
     }
 
-    let raw = serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?;
+    let mut next = settings;
+    if previous.note_directory != next.note_directory {
+        let notes_dir = normalized_notes_dir(&next.note_directory)
+            .ok_or_else(|| format!("无效的存储目录: {}", next.note_directory))?;
+        fs::create_dir_all(&notes_dir).map_err(|error| error.to_string())?;
+        guard.notes_dir = notes_dir.clone();
+        next.note_directory = notes_dir.display().to_string();
+    }
+
+    let raw = serde_json::to_string_pretty(&next).map_err(|error| error.to_string())?;
     fs::write(&guard.settings_path, raw).map_err(|error| error.to_string())?;
-    Ok(settings)
+    Ok(next)
 }
 
 /// Swap the registered wake shortcut, rolling back to the previous one on failure.
@@ -341,8 +381,20 @@ fn set_window_pinned(app: AppHandle, pinned: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn choose_notes_dir() -> Option<String> {
-    None
+fn choose_notes_dir(app: AppHandle, state: State<SharedState>) -> Result<Option<String>, String> {
+    let current_dir = {
+        let guard = state.lock().map_err(|error| error.to_string())?;
+        guard.notes_dir.clone()
+    };
+
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("选择 QuickNote 存储目录")
+        .set_directory(&current_dir)
+        .blocking_pick_folder();
+
+    Ok(selected.and_then(file_path_to_path_buf).map(|path| path.display().to_string()))
 }
 
 fn toggle_main_window(app: &AppHandle) -> tauri::Result<()> {
@@ -360,6 +412,114 @@ fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
     window.show()?;
     window.set_focus()?;
     Ok(())
+}
+
+fn should_hide_on_blur(app: &AppHandle) -> bool {
+    let state = app.state::<SharedState>();
+    let Ok(guard) = state.lock() else {
+        return false;
+    };
+    read_settings_file(&guard.settings_path)
+        .unwrap_or_else(|| default_settings(&guard.notes_dir))
+        .hide_on_blur
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+fn handle_opened_urls(app: &AppHandle, urls: Vec<Url>) -> Result<(), String> {
+    let paths = urls
+        .into_iter()
+        .map(|url| {
+            url.to_file_path()
+                .map_err(|_| format!("unsupported opened resource: {url}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    import_opened_paths(app, paths).map(|_| ())
+}
+
+fn import_cli_opened_files(app: &AppHandle) {
+    let paths = std::env::args_os()
+        .skip(1)
+        .map(PathBuf::from)
+        .filter(|path| {
+            !path
+                .to_string_lossy()
+                .starts_with("-psn_")
+                && is_markdown_path(path)
+        })
+        .collect::<Vec<_>>();
+
+    if !paths.is_empty() {
+        if let Err(error) = import_opened_paths(app, paths) {
+            eprintln!("failed to open cli markdown file: {error}");
+        }
+    }
+}
+
+fn import_opened_paths(app: &AppHandle, paths: Vec<PathBuf>) -> Result<Vec<String>, String> {
+    let mut opened_ids = Vec::new();
+    {
+        let state = app.state::<SharedState>();
+        let mut guard = state.lock().map_err(|error| error.to_string())?;
+        for path in paths {
+            let note = import_markdown_file(&guard.notes_dir, &path)?;
+            opened_ids.push(note.meta.id);
+        }
+        guard.pending_opened_note_ids.extend(opened_ids.clone());
+    }
+
+    if !opened_ids.is_empty() {
+        let _ = show_main_window(app);
+        let _ = app.emit("note:external-opened", &opened_ids);
+    }
+    Ok(opened_ids)
+}
+
+fn import_markdown_file(notes_dir: &Path, source: &Path) -> Result<NoteDocument, String> {
+    if !is_markdown_path(source) {
+        return Err(format!("unsupported file type: {}", source.display()));
+    }
+
+    if let (Ok(source), Ok(notes_dir)) = (source.canonicalize(), notes_dir.canonicalize()) {
+        if source.parent() == Some(notes_dir.as_path()) {
+            return read_note_from_path(&source);
+        }
+    }
+
+    let raw = fs::read_to_string(source).map_err(|error| error.to_string())?;
+    let filename = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("imported-note.md");
+    let target = available_import_path(notes_dir, filename);
+    fs::write(&target, raw).map_err(|error| error.to_string())?;
+    read_note_from_path(&target)
+}
+
+fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| matches!(extension.to_ascii_lowercase().as_str(), "md" | "markdown"))
+        .unwrap_or(false)
+}
+
+fn available_import_path(notes_dir: &Path, filename: &str) -> PathBuf {
+    let candidate = notes_dir.join(filename);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let path = Path::new(filename);
+    let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or("imported-note");
+    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("md");
+
+    for index in 1.. {
+        let candidate = notes_dir.join(format!("{stem}-{index}.{extension}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    unreachable!("import path loop is unbounded")
 }
 
 fn read_notes(dir: &Path) -> Result<Vec<NoteDocument>, String> {
@@ -470,5 +630,26 @@ fn default_settings(notes_dir: &Path) -> AppSettings {
         hide_on_blur: true,
         smooth_caret: true,
         typewriter_scroll: true,
+    }
+}
+
+fn normalized_notes_dir(value: &str) -> Option<PathBuf> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed == "~" {
+        return dirs::home_dir();
+    }
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        return dirs::home_dir().map(|home| home.join(rest));
+    }
+    Some(PathBuf::from(trimmed))
+}
+
+fn file_path_to_path_buf(value: FilePath) -> Option<PathBuf> {
+    match value {
+        FilePath::Path(path) => Some(path),
+        FilePath::Url(url) => url.to_file_path().ok(),
     }
 }

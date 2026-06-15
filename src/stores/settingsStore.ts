@@ -5,6 +5,7 @@ import type { AppSettings, ThemeMode } from '../types'
 interface SettingsState extends AppSettings {
   load: () => Promise<void>
   update: (settings: Partial<AppSettings>) => Promise<void>
+  chooseNotesDirectory: () => Promise<string | null>
 }
 
 const defaults: AppSettings = {
@@ -32,6 +33,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settings: { ...getSnapshot(get()), ...settings },
     })
     set(next)
+  },
+
+  async chooseNotesDirectory() {
+    const directory = await command<string | null>('choose_notes_dir')
+    if (!directory) return null
+    await get().update({ noteDirectory: directory })
+    return directory
   },
 }))
 

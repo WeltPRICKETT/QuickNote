@@ -4,6 +4,8 @@ import { command } from '../lib/tauri'
 import { useGroupStore } from './groupStore'
 import type { NoteDocument, NoteMeta, SearchResult } from '../types'
 
+const isNative = '__TAURI_INTERNALS__' in window
+
 interface AppState {
   notes: NoteMeta[]
   currentNote?: NoteDocument
@@ -15,6 +17,8 @@ interface AppState {
   saving: boolean
   lastSavedAt?: string
   boot: () => Promise<void>
+  reloadNotes: () => Promise<NoteMeta[]>
+  handleOpenedNotes: () => Promise<boolean>
   createNote: () => Promise<void>
   openNote: (id: string) => Promise<void>
   deleteNote: (id: string) => Promise<void>
@@ -37,13 +41,36 @@ export const useAppStore = create<AppState>((set, get) => ({
   saving: false,
 
   async boot() {
-    const notes = await command<NoteMeta[]>('list_notes')
-    set({ notes })
+    const notes = await get().reloadNotes()
+    if (await get().handleOpenedNotes()) {
+      return
+    }
     if (notes[0]) {
       await get().openNote(notes[0].id)
     } else {
       await get().createNote()
     }
+  },
+
+  async reloadNotes() {
+    const notes = await command<NoteMeta[]>('list_notes')
+    set({ notes })
+    return notes
+  },
+
+  async handleOpenedNotes() {
+    const openedIds = await command<string[]>('consume_opened_notes')
+    if (!openedIds.length) {
+      return false
+    }
+
+    await get().reloadNotes()
+    const id = openedIds.at(-1)
+    if (id) {
+      await get().openNote(id)
+      eventBus.emit('note:opened-external', { id })
+    }
+    return true
   },
 
   async createNote() {
@@ -114,3 +141,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pinned })
   },
 }))
+
+if (isNative) {
+  void import('@tauri-apps/api/event').then(({ listen }) =>
+    listen<string[]>('note:external-opened', () => {
+      void useAppStore.getState().handleOpenedNotes()
+    }),
+  )
+}
