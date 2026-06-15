@@ -2,9 +2,10 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
+    panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
 };
 use tauri::{
     Emitter,
@@ -58,6 +59,8 @@ struct QuickNoteState {
 
 type SharedState = Mutex<QuickNoteState>;
 
+static DEFERRED_OPEN_PATHS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -78,6 +81,7 @@ pub fn run() {
                 .map(|settings| settings.global_shortcut)
                 .unwrap_or_else(|| "Alt+Space".into());
             app.manage(Mutex::new(state));
+            import_deferred_opened_paths(app.handle());
             import_cli_opened_files(app.handle());
             setup_tray(app.handle())?;
             let shortcut = parse_shortcut(&configured)
@@ -122,8 +126,11 @@ pub fn run() {
         .run(|app, event| {
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
             if let RunEvent::Opened { urls } = event {
-                if let Err(error) = handle_opened_urls(app, urls) {
-                    eprintln!("failed to open external markdown file: {error}");
+                let result = panic::catch_unwind(AssertUnwindSafe(|| handle_opened_urls(app, urls)));
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => eprintln!("failed to open external markdown file: {error}"),
+                    Err(_) => eprintln!("failed to open external markdown file: unexpected panic"),
                 }
             }
         });
@@ -398,7 +405,9 @@ fn choose_notes_dir(app: AppHandle, state: State<SharedState>) -> Result<Option<
 }
 
 fn toggle_main_window(app: &AppHandle) -> tauri::Result<()> {
-    let window = app.get_webview_window("main").expect("main window");
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| tauri::Error::WindowNotFound)?;
     if window.is_visible()? {
         window.hide()?;
     } else {
@@ -408,14 +417,18 @@ fn toggle_main_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
-    let window = app.get_webview_window("main").expect("main window");
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| tauri::Error::WindowNotFound)?;
     window.show()?;
     window.set_focus()?;
     Ok(())
 }
 
 fn should_hide_on_blur(app: &AppHandle) -> bool {
-    let state = app.state::<SharedState>();
+    let Some(state) = app.try_state::<SharedState>() else {
+        return false;
+    };
     let Ok(guard) = state.lock() else {
         return false;
     };
@@ -433,7 +446,7 @@ fn handle_opened_urls(app: &AppHandle, urls: Vec<Url>) -> Result<(), String> {
                 .map_err(|_| format!("unsupported opened resource: {url}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    import_opened_paths(app, paths).map(|_| ())
+    import_or_defer_opened_paths(app, paths).map(|_| ())
 }
 
 fn import_cli_opened_files(app: &AppHandle) {
@@ -449,16 +462,54 @@ fn import_cli_opened_files(app: &AppHandle) {
         .collect::<Vec<_>>();
 
     if !paths.is_empty() {
-        if let Err(error) = import_opened_paths(app, paths) {
+        if let Err(error) = import_or_defer_opened_paths(app, paths) {
             eprintln!("failed to open cli markdown file: {error}");
         }
     }
 }
 
+fn import_or_defer_opened_paths(app: &AppHandle, paths: Vec<PathBuf>) -> Result<Vec<String>, String> {
+    if app.try_state::<SharedState>().is_none() {
+        defer_opened_paths(paths)?;
+        return Ok(Vec::new());
+    }
+
+    import_opened_paths(app, paths)
+}
+
+fn import_deferred_opened_paths(app: &AppHandle) {
+    let paths = {
+        let Ok(mut guard) = deferred_open_paths().lock() else {
+            return;
+        };
+        std::mem::take(&mut *guard)
+    };
+
+    if paths.is_empty() {
+        return;
+    }
+
+    if let Err(error) = import_opened_paths(app, paths) {
+        eprintln!("failed to open deferred markdown file: {error}");
+    }
+}
+
+fn defer_opened_paths(paths: Vec<PathBuf>) -> Result<(), String> {
+    let mut guard = deferred_open_paths().lock().map_err(|error| error.to_string())?;
+    guard.extend(paths);
+    Ok(())
+}
+
+fn deferred_open_paths() -> &'static Mutex<Vec<PathBuf>> {
+    DEFERRED_OPEN_PATHS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
 fn import_opened_paths(app: &AppHandle, paths: Vec<PathBuf>) -> Result<Vec<String>, String> {
     let mut opened_ids = Vec::new();
     {
-        let state = app.state::<SharedState>();
+        let state = app
+            .try_state::<SharedState>()
+            .ok_or_else(|| "quicknote state is not ready".to_string())?;
         let mut guard = state.lock().map_err(|error| error.to_string())?;
         for path in paths {
             let note = import_markdown_file(&guard.notes_dir, &path)?;
